@@ -54,7 +54,7 @@
 - [x] 配置镜像加速，解决 docker.io 超时
 - [x] Traefik Ingress 贯通（nginx 验证，浏览器 200）
 - [x] Flask + MySQL 业务部署（web:v1 镜像，2 副本跨节点，/api/time 返回数据库时间）
-- [ ] GitHub Actions 自动发布
+- [x] GitHub Actions 自动发布（push → 构建 ghcr 镜像 → kubectl set image 滚动更新 → 失败自动回滚）
 - [ ] Prometheus + Grafana 监控看板
 - [ ] Alertmanager 飞书告警
 - [ ] Loki 日志查询
