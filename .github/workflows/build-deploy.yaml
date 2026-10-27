@@ -37,6 +37,10 @@ jobs:
   deploy:
     name: 部署到 k3s
     needs: build
+    # 默认跳过：GitHub 托管 Runner 的出口 IP 不在 6443 白名单内，连不上 API Server。
+    # 需要自动部署时，在仓库 Settings → Secrets and variables → Actions → Variables
+    # 里加一个 ENABLE_DEPLOY=true；显式关闭可设为 false 或删除该变量。
+    if: vars.ENABLE_DEPLOY == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: 准备 kubeconfig

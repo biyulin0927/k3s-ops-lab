@@ -85,7 +85,8 @@
 3. **故障演练**：01–06 共 6 类未做（磁盘打满、Pod OOM、节点宕机、MySQL 不可用、误删配置、镜像拉取失败）
 4. **flannel FDB 修复不持久**：08 号故障是手工补的表项，需重启 `k3s-agent` 验证能否自动重建
 5. **6443 安全组**：当前对 `118.113.89.85` 开放，需确认是 `/32` 还是 `0.0.0.0/0`
-6. **GitHub Actions 部署 job 会失败**：6443 未对 GitHub Runner 开放，属预期；要长期自动部署需自托管 Runner
+6. **GitHub Actions 部署 job 默认跳过**：托管 Runner 的出口 IP 不在 6443 白名单，连不上 API Server。
+   已加 `ENABLE_DEPLOY` 开关（见备注），要真正自动部署需自托管 Runner
 
 **下次开工顺序**
 
@@ -195,4 +196,7 @@ kubectl apply -f monitoring/blackbox.yaml
 
 - 本项目为个人学习用途，节点为单点 master，不具备生产高可用能力
 - 存储使用 local-path（本地盘），数据随节点丢失，生产环境应使用云盘或分布式存储
+- **CI 自动部署开关**：`deploy` job 默认跳过（托管 Runner 出口 IP 不在 6443 白名单）。
+  需要时在仓库 *Settings → Secrets and variables → Actions → Variables* 新建 `ENABLE_DEPLOY=true`；
+  关闭则删除该变量或设为 `false`
 - `feishu-relay` 是历史命名，代码里 `DINGTALK=1` 时才发钉钉；后续可统一改名为 `alert-relay`
