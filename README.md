@@ -117,9 +117,11 @@ Grafana 看板（8 个面板，数据来自 Prometheus）：
 
 ![Grafana 监控看板](docs/grafana-dashboard.png)
 
-告警经 Grafana 规则 → Webhook Relay → 钉钉群推送：
+告警经 Grafana 规则 → Webhook Relay → 钉钉群推送，触发与恢复各有一次通知：
 
 ![钉钉告警](docs/dingtalk-alert.png)
+
+![钉钉告警恢复](docs/dingtalk-alert-resolved.png)
 
 ## 快速开始
 
