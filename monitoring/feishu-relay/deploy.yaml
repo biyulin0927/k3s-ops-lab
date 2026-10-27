@@ -1,0 +1,63 @@
+# 部署 Alertmanager → 飞书 告警转发服务
+#
+# 前置：先创建代码 ConfigMap（不要手动粘代码，用命令生成最稳）
+#   kubectl create configmap feishu-relay-src --from-file=app.py=app.py -n default
+#
+# 然后：
+#   kubectl apply -f deploy.yaml
+#   kubectl -n default set env deploy/feishu-relay FEISHU_WEBHOOK='https://open.feishu.cn/open-apis/bot/v2/hook/xxx'
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: feishu-relay
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: feishu-relay
+  template:
+    metadata:
+      labels:
+        app: feishu-relay
+    spec:
+      containers:
+        - name: relay
+          image: python:3.12-alpine
+          command: ["python", "/app/app.py"]
+          env:
+            - name: FEISHU_WEBHOOK
+              value: "https://open.feishu.cn/open-apis/bot/v2/hook/placeholder"
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+          volumeMounts:
+            - name: src
+              mountPath: /app
+      volumes:
+        - name: src
+          configMap:
+            name: feishu-relay-src
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: feishu-relay
+  namespace: default
+spec:
+  selector:
+    app: feishu-relay
+  ports:
+    - port: 8080
+      targetPort: 8080

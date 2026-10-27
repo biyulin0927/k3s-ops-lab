@@ -55,10 +55,41 @@
 - [x] Traefik Ingress 贯通（nginx 验证，浏览器 200）
 - [x] Flask + MySQL 业务部署（web:v1 镜像，2 副本跨节点，/api/time 返回数据库时间）
 - [x] GitHub Actions 自动发布（push → 构建 ghcr 镜像 → kubectl set image 滚动更新 → 失败自动回滚）
-- [ ] Prometheus + Grafana 监控看板
-- [ ] Alertmanager 飞书告警
+- [x] Prometheus + Grafana 监控看板（8 个面板：CPU / 内存 / 磁盘 / 网络 / QPS / P95 / Pod 重启）
+- [x] 告警链路（Grafana 告警规则 → Webhook → Relay → 钉钉，4 条规则已实测触发）
 - [ ] Loki 日志查询
 - [ ] 6 类故障演练（见 `drills/`）
+
+## 当前状态（2026-10-26 收工）
+
+**已完成**
+
+| 项 | 说明 |
+|---|---|
+| 集群 | 2 节点 k3s v1.36.5，master 2C2G / worker 2C4G |
+| 业务 | Flask + MySQL，2 副本跨节点，`/api/time` 正常 |
+| 入口 | Traefik Ingress，`pathType: Prefix` |
+| 镜像 | ghcr.io 自动构建，k3s 配置了 docker.io / registry.k8s.io 加速 |
+| CI/CD | GitHub Actions 全链路验证通过（kubeconfig 用 base64 存 Secret） |
+| 监控 | Prometheus + Alertmanager Running，NodePort 30390 可访问 |
+
+**进行中 / 待处理**
+
+1. **Grafana 起不来（Pod 2/3，sidecar 未就绪）**
+   - 已写 `monitoring/grafana-standalone.yaml`（单容器方案，未验证）
+   - 待 master 升配到 4G 后部署验证
+2. **master 内存不足**：2C2G 跑控制面 + 监控会触发 API Server TLS 超时、sshd 断连
+   - 计划：升配到 2C4G（与 worker 一致）
+3. **6443 安全组**：验证完 CI 后应改回 `118.113.89.85/32`（当前可能仍是 0.0.0.0/0）
+4. 飞书告警、Loki、6 类故障演练未开始
+
+**下次开工顺序**
+
+1. master 升配 4G 后：`free -h`、`kubectl get nodes`、`kubectl -n monitoring get pods` 确认环境
+2. 部署独立 Grafana：`scp monitoring/grafana-standalone.yaml` → `kubectl apply -f`
+3. 浏览器 `http://8.156.73.132:30300`（admin / admin123）→ 导入面板 315
+4. 截图存 README，勾掉监控那条
+5. 再考虑飞书告警 + Loki + 故障演练
 
 ## 目录结构
 
@@ -79,6 +110,16 @@ k3s-ops-lab/
 │   └── feishu-relay/         # 告警转发到飞书
 └── drills/                   # 故障演练与复盘记录
 ```
+
+## 监控与告警效果
+
+Grafana 看板（8 个面板，数据来自 Prometheus）：
+
+![Grafana 监控看板](docs/grafana-dashboard.png)
+
+告警经 Grafana 规则 → Webhook Relay → 钉钉群推送：
+
+![钉钉告警](docs/dingtalk-alert.png)
 
 ## 快速开始
 

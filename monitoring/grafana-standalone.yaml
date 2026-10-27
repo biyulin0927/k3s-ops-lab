@@ -1,0 +1,318 @@
+# 独立部署的 Grafana（替代 kube-prometheus-stack 自带的那套）
+# 包含：数据源自动配置 + 告警规则自动配置（钉钉推送）
+#
+# 部署：kubectl apply -f grafana-standalone.yaml
+# 访问：http://<node-ip>:30300  账号 admin / admin123
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource
+  namespace: monitoring
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        access: proxy
+        url: http://kube-prom-kube-prometheus-prometheus.monitoring.svc:9090
+        isDefault: true
+        jsonData:
+          timeInterval: 30s
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-alerting
+  namespace: monitoring
+data:
+  alerting.yaml: |
+    apiVersion: 1
+    contactPoints:
+      - orgId: 1
+        name: dingtalk
+        receivers:
+          - uid: dingtalk-webhook
+            type: webhook
+            disableResolveMessage: false
+            settings:
+              url: http://feishu-relay.default.svc.cluster.local:8080/alert
+              httpMethod: POST
+    policies:
+      - orgId: 1
+        receiver: dingtalk
+        group_by: ['alertname']
+        group_wait: 30s
+        group_interval: 1m
+        repeat_interval: 4h
+    groups:
+      - orgId: 1
+        name: k3s-alerts
+        folder: k3s-alerts
+        interval: 1m
+        rules:
+          - uid: node-memory-high
+            title: 节点内存使用率过高
+            condition: C
+            for: 2m
+            noDataState: OK
+            execErrState: Error
+            labels:
+              severity: warning
+            annotations:
+              summary: 节点 {{ $labels.instance }} 内存使用率超过 85%
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: prometheus
+                model:
+                  editorMode: code
+                  expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100
+                  instant: true
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator: {params: [85], type: gt}
+                      operator: {type: and}
+                      query: {params: [A]}
+                      reducer: {params: [], type: last}
+                      type: query
+                  datasource: {type: __expr__, uid: __expr__}
+                  expression: A
+                  refId: C
+                  type: threshold
+
+          - uid: node-disk-high
+            title: 节点磁盘使用率过高
+            condition: C
+            for: 5m
+            noDataState: OK
+            execErrState: Error
+            labels:
+              severity: warning
+            annotations:
+              summary: 节点 {{ $labels.instance }} 根分区使用率超过 85%
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: prometheus
+                model:
+                  editorMode: code
+                  expr: (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!="tmpfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!="tmpfs"}) * 100
+                  instant: true
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator: {params: [85], type: gt}
+                      operator: {type: and}
+                      query: {params: [A]}
+                      reducer: {params: [], type: last}
+                      type: query
+                  datasource: {type: __expr__, uid: __expr__}
+                  expression: A
+                  refId: C
+                  type: threshold
+
+          - uid: pod-restart-loop
+            title: Pod 频繁重启
+            condition: C
+            for: 1m
+            noDataState: OK
+            execErrState: Error
+            labels:
+              severity: critical
+            annotations:
+              summary: Pod {{ $labels.namespace }}/{{ $labels.pod }} 10 分钟内重启超过 3 次
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: prometheus
+                model:
+                  editorMode: code
+                  expr: increase(kube_pod_container_status_restarts_total{namespace="demo"}[10m])
+                  instant: true
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator: {params: [3], type: gt}
+                      operator: {type: and}
+                      query: {params: [A]}
+                      reducer: {params: [], type: last}
+                      type: query
+                  datasource: {type: __expr__, uid: __expr__}
+                  expression: A
+                  refId: C
+                  type: threshold
+
+          - uid: app-5xx-high
+            title: 应用 5xx 比例过高
+            condition: C
+            for: 1m
+            noDataState: OK
+            execErrState: Error
+            labels:
+              severity: critical
+            annotations:
+              summary: 应用 5xx 请求占比超过 20%
+            data:
+              - refId: A
+                relativeTimeRange: {from: 300, to: 0}
+                datasourceUid: prometheus
+                model:
+                  editorMode: code
+                  expr: sum(rate(http_requests_total{status="500"}[5m])) / sum(rate(http_requests_total[5m])) * 100
+                  instant: true
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator: {params: [20], type: gt}
+                      operator: {type: and}
+                      query: {params: [A]}
+                      reducer: {params: [], type: last}
+                      type: query
+                  datasource: {type: __expr__, uid: __expr__}
+                  expression: A
+                  refId: C
+                  type: threshold
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-admin
+  namespace: monitoring
+type: Opaque
+stringData:
+  GF_SECURITY_ADMIN_PASSWORD: admin123
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  namespace: monitoring
+spec:
+  storageClassName: local-path
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k3s-node1
+      securityContext:
+        fsGroup: 472
+        runAsUser: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:13.2.4
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: GF_SECURITY_ADMIN_PASSWORD
+            - name: GF_ANALYTICS_REPORTING_ENABLED
+              value: "false"
+            - name: GF_ANALYTICS_CHECK_FOR_UPDATES
+              value: "false"
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+            - name: GF_PLUGINS_PREINSTALL_DISABLED
+              value: "true"
+            - name: GF_DEFAULT_INSTANCE_NAME
+              value: k3s-ops
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 768Mi
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            failureThreshold: 5
+          volumeMounts:
+            - name: datasource
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: alerting
+              mountPath: /etc/grafana/provisioning/alerting
+            - name: data
+              mountPath: /var/lib/grafana
+      volumes:
+        - name: datasource
+          configMap:
+            name: grafana-datasource
+        - name: alerting
+          configMap:
+            name: grafana-alerting
+        - name: data
+          persistentVolumeClaim:
+            claimName: grafana-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  type: NodePort
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30300

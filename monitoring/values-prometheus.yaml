@@ -1,0 +1,92 @@
+# kube-prometheus-stack 裁剪配置（适配 2C4G 的 worker 节点）
+# 用法：helm install kube-prom prometheus-community/kube-prometheus-stack -n monitoring --create-namespace -f values-prometheus.yaml
+
+# 所有组件都调度到 worker，别占用 master 的内存
+global:
+  nodeSelector:
+    kubernetes.io/hostname: k3s-node1
+
+grafana:
+  enabled: true
+  adminPassword: admin123
+  service:
+    type: NodePort
+    nodePort: 30300
+  persistence:
+    enabled: false
+  defaultDashboardsTimezone: Asia/Shanghai
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 256Mi}
+  nodeSelector:
+    kubernetes.io/hostname: k3s-node1
+
+prometheus:
+  service:
+    type: NodePort
+    nodePort: 30390
+  prometheusSpec:
+    retention: 7d
+    scrapeInterval: 30s
+    resources:
+      requests: {cpu: 100m, memory: 512Mi}
+      limits: {memory: 1200Mi}
+    nodeSelector:
+      kubernetes.io/hostname: k3s-node1
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    resources:
+      requests: {cpu: 20m, memory: 64Mi}
+      limits: {memory: 128Mi}
+    nodeSelector:
+      kubernetes.io/hostname: k3s-node1
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: "null"
+      group_by: [alertname, namespace]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+    receivers:
+      - name: "null"
+
+prometheusOperator:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 256Mi}
+  nodeSelector:
+    kubernetes.io/hostname: k3s-node1
+
+kube-state-metrics:
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {memory: 128Mi}
+  nodeSelector:
+    kubernetes.io/hostname: k3s-node1
+
+prometheus-node-exporter:
+  resources:
+    requests: {cpu: 20m, memory: 30Mi}
+    limits: {memory: 64Mi}
+
+# k3s 的 etcd/controller/scheduler 路径与标准 k8s 不同，开启会产生大量 TargetDown 告警
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
