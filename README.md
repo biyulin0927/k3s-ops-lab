@@ -140,6 +140,22 @@ kubectl -n monitoring port-forward svc/kube-prom-kube-prometheus-prometheus 9090
 curl -s 'localhost:9090/api/v1/query?query=probe_success'
 ```
 
+### 入口告警实测（2026-10-27）
+
+把 `blackbox-exporter` 缩容到 0 模拟探针失效，验证规则与钉钉链路端到端可用：
+
+| 时间 | 事件 |
+|---|---|
+| 20:06:38 | 缩容到 0，探针停止上报 |
+| 20:10:12 | 规则变为 firing，钉钉收到 1 条告警（relay 回执 200） |
+| 20:11:08 | 恢复副本，探针重新上报 |
+| 20:12:12 | 规则回到 inactive，钉钉收到 1 条恢复通知 |
+
+发现耗时约 3 分半（1 分钟评估间隔 + 2 分钟 `for`），恢复通知在探针恢复后约 1 分钟送达。
+
+> 排障备注：Grafana 13 的 provisioning 不会清理数据库里同名的遗留联系人，会让每次通知重复发两条。
+> 本次删除了历史遗留的联系人，重启后确认只剩 `dingtalk-webhook` 一条。
+
 ## 快速开始
 
 ```bash
