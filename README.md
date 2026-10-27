@@ -1,26 +1,26 @@
 # k3s 一体化运维平台
 
-在 2 台 2C2G 阿里云 ECS 上搭建的轻量级业务运维平台：k3s 集群承载 Flask + MySQL 业务，配套 Ingress、监控告警、日志与故障演练。
+在 2 台 2C4G 阿里云 ECS 上搭建的轻量级业务运维平台：k3s 集群承载 Flask + MySQL 业务，配套 Ingress、监控告警、日志与故障演练。
 
 > 这是一个**学习 + 简历**项目，目标是完整走一遍「部署 → 观测 → 故障 → 复盘」的运维闭环。
 
 ## 架构
 
 ```
-开发者 push ──▶ GitHub Actions ──▶ 镜像仓库(ghcr.io / ACR)
+开发者 push ──▶ GitHub Actions ──▶ 镜像仓库(ghcr.io)
                                       │ kubectl set image
                                       ▼
 ┌──────────────────────────────────────────────────────────┐
-│ k3s 集群（2 节点，172.16.0.0/12）                          │
+│ k3s 集群（2 节点，172.26.0.0/20）                          │
 │                                                          │
 │  ns: demo                      ns: monitoring            │
 │  ┌─────────┐  ┌──────────┐     ┌────────────┐            │
-│  │ web ×2  │─▶│ mysql    │     │ Prometheus │            │
-│  │ Flask   │  │ Stateful │     │ Alertmgr   │──▶ 飞书    │
-│  └────┬────┘  └──────────┘     │ Loki       │            │
-│       │                        │ Grafana    │            │
-│       ▼                        └────────────┘            │
-│   Traefik Ingress（80/443）                               │
+│  │ web ×1  │─▶│ mysql    │     │ Prometheus │            │
+│  │ Flask   │  │ Stateful │     │ Alertmgr   │            │
+│  └────┬────┘  └──────────┘     │ Grafana    │            │
+│       │                        └─────┬──────┘            │
+│       ▼                              ▼                   │
+│   Traefik Ingress（80/443）      Webhook Relay ──▶ 钉钉    │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -29,59 +29,63 @@
 | 类别 | 组件 |
 |---|---|
 | 容器编排 | k3s v1.36.5（Kubernetes 轻量发行版） |
-| 入口 | Traefik Ingress Controller |
-| 业务 | Python Flask + PyMySQL |
+| 入口 | Traefik Ingress Controller（svclb 暴露 80/443） |
+| 业务 | Python Flask + PyMySQL + prometheus_client |
 | 数据库 | MySQL 8.0（StatefulSet + local-path 存储） |
-| 监控 | Prometheus + Grafana + Alertmanager |
-| 日志 | Loki + Promtail |
-| 配置管理 | Ansible |
+| 监控 | Prometheus + Grafana（NodePort 30300）+ Alertmanager |
+| 告警 | Grafana 告警规则 → Webhook Relay → 钉钉 |
+| 配置管理 | Ansible（规划中） |
 | 自动化 | GitHub Actions |
 
 ## 环境信息
 
-| 角色 | 主机名 | 私网 IP | 公网 IP |
-|---|---|---|---|
-| master | iz2vcih52kdnj152u1buo0z | 172.26.13.50 | 8.156.73.132 |
-| worker | k3s-node1 | 172.26.13.51 | 8.156.68.82 |
+| 角色 | 主机名 | 私网 IP | 公网 IP | 规格 | 磁盘 |
+|---|---|---|---|---|---|
+| master | master | 172.26.13.50 | 8.156.73.132 | 2 vCPU / 4 GiB | 40 GiB |
+| worker | k3s-node1 | 172.26.13.51 | 8.156.68.82 | 2 vCPU / 4 GiB | 40 GiB |
 
-- 地域：华东/西南（cn-chengdu）
-- 规格：2 vCPU / 2 GiB，Ubuntu 22.04
+- 地域：华东/西南（cn-chengdu），Ubuntu 22.04.5，内核 5.15
 - 镜像加速：`/etc/rancher/k3s/registries.yaml`（docker.m.daocloud.io 等）
+- 主机名曾于 10-27 变更，详见 [`drills/08-node-rename.md`](drills/08-node-rename.md)
 
 ## 进度
 
 - [x] 双节点 k3s 集群，节点 Ready
 - [x] 配置镜像加速，解决 docker.io 超时
-- [x] Traefik Ingress 贯通（nginx 验证，浏览器 200）
-- [x] Flask + MySQL 业务部署（web:v1 镜像，2 副本跨节点，/api/time 返回数据库时间）
-- [x] GitHub Actions 自动发布（push → 构建 ghcr 镜像 → kubectl set image 滚动更新 → 失败自动回滚）
-- [x] Prometheus + Grafana 监控看板（8 个面板：CPU / 内存 / 磁盘 / 网络 / QPS / P95 / Pod 重启）
-- [x] 告警链路（Grafana 告警规则 → Webhook → Relay → 钉钉，4 条规则已实测触发）
+- [x] Traefik Ingress 贯通（`pathType: Prefix`，浏览器 200）
+- [x] Flask + MySQL 业务部署（`/api/time` 返回数据库时间，`/metrics` 暴露指标）
+- [x] GitHub Actions 自动发布（push → ghcr 镜像 → 滚动更新 → 失败回滚）
+- [x] Prometheus + Grafana 监控看板（8 个面板）
+- [x] 告警链路（Grafana 规则 → Webhook Relay → 钉钉，4 条规则实测触发与恢复）
+- [x] master 升配到 2C4G
+- [x] 入口可用性探针（blackbox-exporter + Grafana 告警规则）
 - [ ] Loki 日志查询
-- [ ] 6 类故障演练（见 `drills/`）
+- [ ] 剩余故障演练（01–06）
 
-## 当前状态（2026-10-27 收工）
+## 当前状态（2026-10-27 晚）
 
 **已完成**
 
 | 项 | 说明 |
 |---|---|
-| 集群 | 2 节点 k3s v1.36.5，worker 2C4G |
-| 业务 | Flask + MySQL，2 副本跨节点，`/api/time` 正常 |
-| 入口 | Traefik Ingress，`pathType: Prefix` |
-| 镜像 | ghcr.io 自动构建，k3s 配置了 docker.io / registry.k8s.io 加速 |
-| CI/CD | GitHub Actions 全链路验证通过（kubeconfig 用 base64 存 Secret） |
-| 监控 | Prometheus + 独立 Grafana（NodePort 30300），8 面板看板 |
-| 告警 | Grafana 规则 → Webhook Relay → 钉钉，4 条规则实测触发与恢复 |
-| 复盘 | `drills/00` Ingress 404、`drills/07` 节点停机级联故障 |
+| 集群 | 2 节点 k3s v1.36.5，均 Ready，无异常 Pod |
+| 业务 | Flask + MySQL，`/api/time` 三处入口均 200 |
+| 入口 | Traefik + svclb，80/443 正常，`pathType: Prefix` |
+| 监控 | Prometheus + Grafana（NodePort 30300），8 面板看板 |
+| 告警 | 4 条业务规则（内存/磁盘/Pod 重启/5xx）+ 1 条入口探活规则 → Relay → 钉钉 |
+| 探针 | blackbox-exporter 探 `http://<node-ip>/api/time`，30s 一次 |
+| 复盘 | `drills/00`、`drills/07`、`drills/08` |
+| 主机名 | 已固化 `master` / `k3s-node1`，幽灵节点已清理 |
 
 **进行中 / 待处理**
 
-1. **Loki 日志**：未部署，Grafana 里还没有日志查询能力
-2. **故障演练**：还差 5 个（磁盘打满、Pod OOM、节点宕机、MySQL 不可用、镜像拉取失败）
-3. **master 仍是 2C2G**：暂不缺内存，但演练时跑大量 Pod 可能不够
-4. **6443 安全组**：CI 验证后应改回 `118.113.89.85/32`
-5. **GitHub Actions 部署 job 会失败**：6443 未对外开放，属预期；要长期自动部署需自托管 Runner
+1. **告警规则来源**：Grafana 规则由 `grafana-standalone.yaml` 的 provisioning 文件提供（`provenance=file`），
+   `create-alerts.py` 是早期 API 方式，已不再需要，留着仅作参考
+2. **Loki 日志**：未部署，Grafana 里还没有日志查询能力
+3. **故障演练**：01–06 共 6 类未做（磁盘打满、Pod OOM、节点宕机、MySQL 不可用、误删配置、镜像拉取失败）
+4. **flannel FDB 修复不持久**：08 号故障是手工补的表项，需重启 `k3s-agent` 验证能否自动重建
+5. **6443 安全组**：当前对 `118.113.89.85` 开放，需确认是 `/32` 还是 `0.0.0.0/0`
+6. **GitHub Actions 部署 job 会失败**：6443 未对 GitHub Runner 开放，属预期；要长期自动部署需自托管 Runner
 
 **下次开工顺序**
 
@@ -95,19 +99,25 @@
 ```
 k3s-ops-lab/
 ├── README.md
-├── ansible/                  # 节点初始化 playbook
+├── ansible/                  # 节点初始化 playbook（规划中）
 ├── app/                      # 业务应用
-│   ├── app.py                # Flask 服务（/api/time 查 MySQL）
+│   ├── app.py                # Flask 服务（/api/time、/metrics、/healthz）
 │   ├── requirements.txt
 │   ├── Dockerfile
-│   └── k8s/                  # K8s 清单
-├── .github/workflows/        # CI/CD 流水线
+│   └── k8s/                  # 00-namespace / 10-mysql / 20-web / 30-ingress
+├── .github/workflows/        # build-deploy.yaml
 ├── monitoring/               # 监控配置
 │   ├── values-prometheus.yaml
-│   ├── alert-rules.yaml
+│   ├── grafana-standalone.yaml   # 独立 Grafana，含数据源与告警 provisioning
+│   ├── blackbox.yaml         # 入口探针：blackbox-exporter + Probe
+│   ├── create-alerts.py      # 早期 API 建规则脚本（已被 provisioning 取代）
 │   ├── grafana-dashboard.json
-│   └── feishu-relay/         # 告警转发到飞书
-└── drills/                   # 故障演练与复盘记录
+│   └── feishu-relay/         # Webhook 转发（实际发钉钉，历史命名）
+└── drills/                   # 故障演练与复盘
+    ├── 演练记录表.md
+    ├── 00-ingress-404.md
+    ├── 07-node-maintenance.md
+    └── 08-node-rename.md
 ```
 
 ## 监控与告警效果
@@ -122,19 +132,34 @@ Grafana 看板（8 个面板，数据来自 Prometheus）：
 
 ![钉钉告警恢复](docs/dingtalk-alert-resolved.png)
 
+入口可用性由 blackbox-exporter 独立探测（不走应用自身的 `/metrics`，避免"应用自证健康"）：
+
+```bash
+# 探针状态：1=可用，0=不可用
+kubectl -n monitoring port-forward svc/kube-prom-kube-prometheus-prometheus 9090:9090
+curl -s 'localhost:9090/api/v1/query?query=probe_success'
+```
+
 ## 快速开始
 
 ```bash
-# 1. 部署业务
+# 1. 部署业务（00 命名空间 → MySQL → web → Ingress）
 kubectl apply -f app/k8s/
 
 # 2. 验证
 curl http://<node-ip>/api/time
 
-# 3. 安装监控（待完成）
+# 3. 监控栈（Prometheus Operator + 独立 Grafana）
 helm install kube-prom prometheus-community/kube-prometheus-stack \
   -n monitoring --create-namespace -f monitoring/values-prometheus.yaml
+kubectl apply -f monitoring/grafana-standalone.yaml
+
+# 4. 入口探针（blackbox-exporter + Probe + 告警规则）
+kubectl apply -f monitoring/blackbox.yaml
 ```
+
+> 注意：`Probe` 的 `probeNamespaceSelector` 为空时**不会**默认匹配自身命名空间，
+> 必须在 Prometheus CR 里显式指定（已写入 `values-prometheus.yaml`），否则抓取任务不会生成。
 
 ## 故障演练记录
 
@@ -147,8 +172,11 @@ helm install kube-prom prometheus-community/kube-prometheus-stack \
 | 04 | MySQL 不可用 | ⬜ |
 | 05 | 误删配置 | ⬜ |
 | 06 | 镜像拉取失败 | ⬜ |
+| 07 | 节点停机变配（计划内，实际演变成故障） | ✅ |
+| 08 | 主机名变更致节点重复注册（真实故障） | ✅ |
 
 ## 备注
 
 - 本项目为个人学习用途，节点为单点 master，不具备生产高可用能力
 - 存储使用 local-path（本地盘），数据随节点丢失，生产环境应使用云盘或分布式存储
+- `feishu-relay` 是历史命名，代码里 `DINGTALK=1` 时才发钉钉；后续可统一改名为 `alert-relay`

@@ -196,6 +196,43 @@ data:
                   expression: A
                   refId: C
                   type: threshold
+          # 入口可用性：由 blackbox-exporter 探针提供 probe_success
+          # 08 号故障就是"Pod 全绿但入口 404"，这条规则专门补这个盲区
+          - uid: ingress-probe-down
+            title: 入口不可用（探针失败）
+            condition: C
+            for: 2m
+            noDataState: Alerting
+            execErrState: Error
+            labels:
+              severity: critical
+            annotations:
+              summary: 入口 /api/time 探活失败，业务可能不可访问（来源：blackbox-exporter）
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: prometheus
+                model:
+                  editorMode: code
+                  expr: min(probe_success{job="blackbox-web-http"})
+                  instant: true
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator: {params: [1], type: lt}
+                      operator: {type: and}
+                      query: {params: [A]}
+                      reducer: {params: [], type: last}
+                      type: query
+                  datasource: {type: __expr__, uid: __expr__}
+                  expression: A
+                  refId: C
+                  type: threshold
 ---
 apiVersion: v1
 kind: Secret

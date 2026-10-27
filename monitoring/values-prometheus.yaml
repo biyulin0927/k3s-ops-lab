@@ -28,6 +28,11 @@ prometheus:
   prometheusSpec:
     retention: 7d
     scrapeInterval: 30s
+    # 注意：Probe 的命名空间选择器为空时不会默认匹配自身命名空间，
+    # 必须显式指定，否则 blackbox 的抓取任务不会被生成
+    probeNamespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: monitoring
     resources:
       requests: {cpu: 100m, memory: 512Mi}
       limits: {memory: 1200Mi}

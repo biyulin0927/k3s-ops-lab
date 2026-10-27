@@ -1,0 +1,127 @@
+# blackbox-exporter：从"外部视角"探测业务入口是否真的可用
+#
+# 为什么需要它：08 号故障里 Pod 全绿、5xx 为 0，但入口已经 404 了 4.5 小时，
+# 现有 4 条规则（内存/磁盘/Pod 重启/5xx）一条都发现不了。
+#
+# 部署：
+#   kubectl apply -f blackbox.yaml
+# 验证：
+#   kubectl -n monitoring get probe
+#   kubectl -n monitoring port-forward svc/blackbox-exporter 9115:9115
+#   curl "localhost:9115/probe?target=http://172.26.13.50/api/time&module=http_2xx"
+#
+# 说明：Probe 是 prometheus-operator 的 CR，会自动往 Prometheus 里加抓取任务，
+#       必须带 label release=kube-prom，否则 Prometheus 不会选中它。
+#
+# 坑：Prometheus CR 里的 probeNamespaceSelector 为空时，Probe **不会**像
+#     ServiceMonitor 那样默认匹配自身命名空间，结果就是 Probe 建了但抓取任务不生成。
+#     已在 values-prometheus.yaml 中显式写入：
+#       prometheusSpec.probeNamespaceSelector.matchLabels.kubernetes.io/metadata.name: monitoring
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blackbox-exporter-config
+  namespace: monitoring
+data:
+  blackbox.yml: |
+    modules:
+      http_2xx:
+        prober: http
+        timeout: 5s
+        http:
+          preferred_ip_protocol: ip4
+          valid_status_codes: [200]
+          follow_redirects: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blackbox-exporter
+  namespace: monitoring
+  labels:
+    app: blackbox-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: blackbox-exporter
+  template:
+    metadata:
+      labels:
+        app: blackbox-exporter
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k3s-node1
+      containers:
+        - name: blackbox-exporter
+          image: quay.io/prometheus/blackbox-exporter:v0.25.0
+          args:
+            - --config.file=/config/blackbox.yml
+            - --web.listen-address=:9115
+          ports:
+            - name: http
+              containerPort: 9115
+          resources:
+            requests:
+              cpu: 10m
+              memory: 24Mi
+            limits:
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9115
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9115
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: config
+          configMap:
+            name: blackbox-exporter-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blackbox-exporter
+  namespace: monitoring
+  labels:
+    app: blackbox-exporter
+spec:
+  selector:
+    app: blackbox-exporter
+  ports:
+    - name: http
+      port: 9115
+      targetPort: 9115
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: web-ingress
+  namespace: monitoring
+  labels:
+    release: kube-prom
+spec:
+  jobName: blackbox-web-http
+  interval: 30s
+  module: http_2xx
+  prober:
+    url: blackbox-exporter.monitoring.svc.cluster.local:9115
+    path: /probe
+  targets:
+    staticConfig:
+      static:
+        # 走节点 IP，等于从集群外视角验证 svclb → Traefik → Service → Pod 全链路
+        - http://172.26.13.50/api/time
+        - http://172.26.13.51/api/time
+      labels:
+        service: web
+        check: ingress
