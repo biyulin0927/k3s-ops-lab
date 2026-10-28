@@ -15,7 +15,7 @@
 │                                                          │
 │  ns: demo                      ns: monitoring            │
 │  ┌─────────┐  ┌──────────┐     ┌────────────┐            │
-│  │ web ×1  │─▶│ mysql    │     │ Prometheus │            │
+│  │ web ×2  │─▶│ mysql    │     │ Prometheus │            │
 │  │ Flask   │  │ Stateful │     │ Alertmgr   │            │
 │  └────┬────┘  └──────────┘     │ Grafana    │            │
 │       │                        └─────┬──────┘            │
@@ -56,11 +56,11 @@
 - [x] Flask + MySQL 业务部署（`/api/time` 返回数据库时间，`/metrics` 暴露指标）
 - [x] GitHub Actions 自动发布（push → ghcr 镜像 → 滚动更新 → 失败回滚）
 - [x] Prometheus + Grafana 监控看板（8 个面板）
-- [x] 告警链路（Grafana 规则 → Webhook Relay → 钉钉，4 条规则实测触发与恢复）
+- [x] 告警链路（Grafana 规则 → Webhook Relay → 钉钉，6 条规则全部实测触发与恢复）
 - [x] master 升配到 2C4G
 - [x] 入口可用性探针（blackbox-exporter + Grafana 告警规则）
 - [ ] Loki 日志查询
-- [ ] 剩余故障演练（01、03–05）
+- [ ] 剩余故障演练（01、03、05）
 
 ## 当前状态（2026-10-28 中午）
 
@@ -74,7 +74,7 @@
 | 监控 | Prometheus + Grafana（NodePort 30300），8 面板看板 |
 | 告警 | 6 条规则（内存/磁盘/Pod 重启/5xx/入口探活/镜像拉取）→ Relay → 钉钉，均已实测触发与恢复 |
 | 探针 | blackbox-exporter 探 `http://<node-ip>/api/time`，30s 一次 |
-| 复盘 | `drills/00`、`drills/02`、`drills/06`、`drills/07`、`drills/08` |
+| 复盘 | `drills/00`、`drills/02`、`drills/04`、`drills/06`、`drills/07`、`drills/08` |
 | 主机名 | 已固化 `master` / `k3s-node1`，幽灵节点已清理 |
 
 **进行中 / 待处理**
@@ -82,11 +82,13 @@
 1. **告警规则来源**：Grafana 规则由 `grafana-standalone.yaml` 的 provisioning 文件提供（`provenance=file`），
    `create-alerts.py` 是早期 API 方式，已不再需要，留着仅作参考
 2. **Loki 日志**：未部署，Grafana 里还没有日志查询能力
-3. **故障演练**：01、03–05 共 4 类未做（磁盘打满、节点宕机、MySQL 不可用、误删配置）；02、06 已完成
+3. **故障演练**：01、03、05 共 3 类未做（磁盘打满、节点宕机、误删配置）；02、04、06 已完成
 4. **Pod 重启规则窗口过长**：`increase[10m]` 导致 Pod 恢复后仍告警 8 分钟，建议改 `[3m]` 并补 OOM 专项告警
-5. **flannel FDB 修复不持久**：08 号故障是手工补的表项，需重启 `k3s-agent` 验证能否自动重建
-6. **6443 安全组**：当前对 `118.113.89.85` 开放，需确认是 `/32` 还是 `0.0.0.0/0`
-7. **GitHub Actions 部署 job 默认跳过**：托管 Runner 的出口 IP 不在 6443 白名单，连不上 API Server。
+5. **readiness 未覆盖数据库依赖**：MySQL 挂了 web 仍 Ready（`/healthz` 不查库），`kubectl` 一片绿但全量 500
+6. **同时告警未抑制**：MySQL 故障会同时触发 5xx 与入口探针告警，建议加 inhibition 收敛到根因
+7. **flannel FDB 修复不持久**：08 号故障是手工补的表项，需重启 `k3s-agent` 验证能否自动重建
+8. **6443 安全组**：当前对 `118.113.89.85` 开放，需确认是 `/32` 还是 `0.0.0.0/0`
+9. **GitHub Actions 部署 job 默认跳过**：托管 Runner 的出口 IP 不在 6443 白名单，连不上 API Server。
    已加 `ENABLE_DEPLOY` 开关（见备注），要真正自动部署需自托管 Runner
 
 **下次开工顺序**
@@ -112,6 +114,7 @@ k3s-ops-lab/
 │   ├── values-prometheus.yaml
 │   ├── grafana-standalone.yaml   # 独立 Grafana，含数据源与告警 provisioning
 │   ├── blackbox.yaml         # 入口探针：blackbox-exporter + Probe
+│   ├── servicemonitor-web.yaml   # 采集业务 /metrics（5xx 规则的数据源）
 │   ├── create-alerts.py      # 早期 API 建规则脚本（已被 provisioning 取代）
 │   ├── grafana-dashboard.json
 │   └── feishu-relay/         # Webhook 转发（实际发钉钉，历史命名）
@@ -119,6 +122,7 @@ k3s-ops-lab/
     ├── 演练记录表.md
     ├── 00-ingress-404.md
     ├── 02-pod-oom.md
+    ├── 04-mysql-down.md
     ├── 06-image-pull.md
     ├── 07-node-maintenance.md
     └── 08-node-rename.md
@@ -189,7 +193,7 @@ kubectl apply -f monitoring/blackbox.yaml
 | 01 | 节点磁盘打满 | ⬜ |
 | 02 | Pod OOM（容器内存超限） | ✅ |
 | 03 | 节点宕机 | ⬜ |
-| 04 | MySQL 不可用 | ⬜ |
+| 04 | MySQL 不可用 | ✅ |
 | 05 | 误删配置 | ⬜ |
 | 06 | 镜像拉取失败（ImagePullBackOff） | ✅ |
 | 07 | 节点停机变配（计划内，实际演变成故障） | ✅ |

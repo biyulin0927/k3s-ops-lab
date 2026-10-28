@@ -57,6 +57,8 @@ kind: Service
 metadata:
   name: web
   namespace: demo
+  labels:
+    app: web
 spec:
   selector:
     app: web
