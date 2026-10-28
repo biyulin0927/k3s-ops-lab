@@ -233,6 +233,43 @@ data:
                   expression: A
                   refId: C
                   type: threshold
+          # 镜像拉取失败：06 号演练发现的新盲区 —— Pod 卡在 ImagePullBackOff 时
+          # 既不重启、也不产生 5xx，现有规则一条都发现不了
+          - uid: pod-image-pull-failed
+            title: Pod 镜像拉取失败
+            condition: C
+            for: 3m
+            noDataState: OK
+            execErrState: Error
+            labels:
+              severity: warning
+            annotations:
+              summary: Pod {{ $labels.namespace }}/{{ $labels.pod }} 镜像拉取失败（{{ $labels.reason }}）
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: prometheus
+                model:
+                  editorMode: code
+                  expr: kube_pod_container_status_waiting_reason{reason=~"ImagePullBackOff|ErrImagePull"} > 0
+                  instant: true
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator: {params: [0], type: gt}
+                      operator: {type: and}
+                      query: {params: [A]}
+                      reducer: {params: [], type: last}
+                      type: query
+                  datasource: {type: __expr__, uid: __expr__}
+                  expression: A
+                  refId: C
+                  type: threshold
 ---
 apiVersion: v1
 kind: Secret
