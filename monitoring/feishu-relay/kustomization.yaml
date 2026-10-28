@@ -1,0 +1,21 @@
+# 用 kustomize 管理 relay 的源码 ConfigMap
+#
+# 背景：05 号演练把 `feishu-relay-src` 这个 ConfigMap 删掉之后，
+# 恢复只能靠"记得当初那条 kubectl create configmap --from-file"命令，
+# 因为配置不在仓库里 —— 这次把它改成声明式的。
+#
+# 用法（在仓库根目录）：
+#   kubectl apply -k monitoring/feishu-relay/
+#
+# 说明：configMapGenerator 会给 ConfigMap 名字加内容哈希后缀，
+#      deploy.yaml 里对它的引用会被 kustomize 自动改写，
+#      内容一变就触发滚动更新，避免"配置更新了但 Pod 还是旧的"。
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deploy.yaml
+configMapGenerator:
+  - name: feishu-relay-src
+    files:
+      - app.py

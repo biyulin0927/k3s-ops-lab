@@ -60,7 +60,7 @@
 - [x] master 升配到 2C4G
 - [x] 入口可用性探针（blackbox-exporter + Grafana 告警规则）
 - [ ] Loki 日志查询
-- [ ] 剩余故障演练（01、03、05）
+- [ ] 剩余故障演练（01、03）
 
 ## 当前状态（2026-10-28 中午）
 
@@ -74,7 +74,7 @@
 | 监控 | Prometheus + Grafana（NodePort 30300），8 面板看板 |
 | 告警 | 6 条规则（内存/磁盘/Pod 重启/5xx/入口探活/镜像拉取）→ Relay → 钉钉，均已实测触发与恢复 |
 | 探针 | blackbox-exporter 探 `http://<node-ip>/api/time`，30s 一次 |
-| 复盘 | `drills/00`、`drills/02`、`drills/04`、`drills/06`、`drills/07`、`drills/08` |
+| 复盘 | `drills/00`、`drills/02`、`drills/04`、`drills/05`、`drills/06`、`drills/07`、`drills/08` |
 | 主机名 | 已固化 `master` / `k3s-node1`，幽灵节点已清理 |
 
 **进行中 / 待处理**
@@ -82,7 +82,7 @@
 1. **告警规则来源**：Grafana 规则由 `grafana-standalone.yaml` 的 provisioning 文件提供（`provenance=file`），
    `create-alerts.py` 是早期 API 方式，已不再需要，留着仅作参考
 2. **Loki 日志**：未部署，Grafana 里还没有日志查询能力
-3. **故障演练**：01、03、05 共 3 类未做（磁盘打满、节点宕机、误删配置）；02、04、06 已完成
+3. **故障演练**：01、03 共 2 类未做（磁盘打满、节点宕机）；02、04、05、06 已完成
 4. **Pod 重启规则窗口过长**：`increase[10m]` 导致 Pod 恢复后仍告警 8 分钟，建议改 `[3m]` 并补 OOM 专项告警
 5. **readiness 未覆盖数据库依赖**：MySQL 挂了 web 仍 Ready（`/healthz` 不查库），`kubectl` 一片绿但全量 500
 6. **同时告警未抑制**：MySQL 故障会同时触发 5xx 与入口探针告警，建议加 inhibition 收敛到根因
@@ -118,11 +118,15 @@ k3s-ops-lab/
 │   ├── create-alerts.py      # 早期 API 建规则脚本（已被 provisioning 取代）
 │   ├── grafana-dashboard.json
 │   └── feishu-relay/         # Webhook 转发（实际发钉钉，历史命名）
+│       ├── app.py
+│       ├── deploy.yaml
+│       └── kustomization.yaml    # 用 kubectl apply -k 部署，ConfigMap 自动生成
 └── drills/                   # 故障演练与复盘
     ├── 演练记录表.md
     ├── 00-ingress-404.md
     ├── 02-pod-oom.md
     ├── 04-mysql-down.md
+    ├── 05-config-deleted.md
     ├── 06-image-pull.md
     ├── 07-node-maintenance.md
     └── 08-node-rename.md
@@ -180,6 +184,12 @@ kubectl apply -f monitoring/grafana-standalone.yaml
 
 # 4. 入口探针（blackbox-exporter + Probe + 告警规则）
 kubectl apply -f monitoring/blackbox.yaml
+
+# 5. 业务指标采集（5xx 告警的数据源）
+kubectl apply -f monitoring/servicemonitor-web.yaml
+
+# 6. 告警转发服务（钉钉 Webhook Relay，ConfigMap 由 app.py 自动生成）
+kubectl apply -k monitoring/feishu-relay/
 ```
 
 > 注意：`Probe` 的 `probeNamespaceSelector` 为空时**不会**默认匹配自身命名空间，
@@ -194,7 +204,7 @@ kubectl apply -f monitoring/blackbox.yaml
 | 02 | Pod OOM（容器内存超限） | ✅ |
 | 03 | 节点宕机 | ⬜ |
 | 04 | MySQL 不可用 | ✅ |
-| 05 | 误删配置 | ⬜ |
+| 05 | 误删配置（告警转发 ConfigMap） | ✅ |
 | 06 | 镜像拉取失败（ImagePullBackOff） | ✅ |
 | 07 | 节点停机变配（计划内，实际演变成故障） | ✅ |
 | 08 | 主机名变更致节点重复注册（真实故障） | ✅ |
@@ -206,4 +216,7 @@ kubectl apply -f monitoring/blackbox.yaml
 - **CI 自动部署开关**：`deploy` job 默认跳过（托管 Runner 出口 IP 不在 6443 白名单）。
   需要时在仓库 *Settings → Secrets and variables → Actions → Variables* 新建 `ENABLE_DEPLOY=true`；
   关闭则删除该变量或设为 `false`
+- **告警转发服务用 kustomize 部署**：`kubectl apply -k monitoring/feishu-relay/`
+  （ConfigMap 由 `app.py` 自动生成并带内容哈希，改代码会触发滚动更新；
+  05 号演练就是误删了这个手工创建的 ConfigMap）
 - `feishu-relay` 是历史命名，代码里 `DINGTALK=1` 时才发钉钉；后续可统一改名为 `alert-relay`
