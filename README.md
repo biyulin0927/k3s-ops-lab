@@ -62,6 +62,11 @@
 - [x] 6 类故障演练（01–06）全部完成，均有复盘
 - [ ] Loki 日志查询
 
+CI 最近的推送均通过（`构建并推送镜像` 成功，`部署到 k3s` 按 `ENABLE_DEPLOY` 开关跳过，
+不会再出现红叉）：
+
+![GitHub Actions](docs/github-actions.png)
+
 ## 当前状态（2026-10-28 下午）
 
 **已完成**
@@ -141,16 +146,24 @@ Grafana 看板（8 个面板，数据来自 Prometheus）：
 
 ![Grafana 监控看板](docs/grafana-dashboard.png)
 
-告警经 Grafana 规则 → Webhook Relay → 钉钉群推送，触发与恢复各有一次通知：
+告警经 Grafana 规则 → Webhook Relay → 钉钉群推送，触发与恢复各有一次通知
+（下图中「应用 5xx」是恢复通知，「入口不可用」是触发 + 恢复一对；
+这两条属服务级告警、没有绑定具体 Pod，所以「对象」显示为 `-`）：
 
-![钉钉告警](docs/dingtalk-alert.png)
+![钉钉告警触发与恢复](docs/dingtalk-alert.png)
 
-![钉钉告警恢复](docs/dingtalk-alert-resolved.png)
+6 条告警规则全部由 `grafana-standalone.yaml` 声明式下发（`Provisioned` 标记），
+当前状态均为正常（绿色对勾）：
 
-入口可用性由 blackbox-exporter 独立探测（不走应用自身的 `/metrics`，避免"应用自证健康"）：
+![告警规则列表](docs/grafana-alert-rules.png)
+
+入口可用性由 blackbox-exporter 独立探测（不走应用自身的 `/metrics`，避免"应用自证健康"）。
+`probe_success` 对两个节点入口各产生一条序列，**1 = 可用，0 = 不可用**：
+
+![blackbox 探针](docs/blackbox-probe.png)
 
 ```bash
-# 探针状态：1=可用，0=不可用
+# 同样的查询也可以用命令行验证
 kubectl -n monitoring port-forward svc/kube-prom-kube-prometheus-prometheus 9090:9090
 curl -s 'localhost:9090/api/v1/query?query=probe_success'
 ```
@@ -195,6 +208,12 @@ kubectl apply -f monitoring/servicemonitor-web.yaml
 kubectl apply -k monitoring/feishu-relay/
 ```
 
+业务验证（`/api/time` 查一次 MySQL 并返回数据库时间；`host` 是实际处理请求的 Pod）：
+
+![业务接口](docs/api-time.png)
+
+> 图里的 `db_time` 是 UTC 时间（MySQL 默认时区），比北京时间早 8 小时，不是写错了。
+
 > 注意：`Probe` 的 `probeNamespaceSelector` 为空时**不会**默认匹配自身命名空间，
 > 必须在 Prometheus CR 里显式指定（已写入 `values-prometheus.yaml`），否则抓取任务不会生成。
 
@@ -211,6 +230,12 @@ kubectl apply -k monitoring/feishu-relay/
 | 06 | 镜像拉取失败（ImagePullBackOff） | ✅ |
 | 07 | 节点停机变配（计划内，实际演变成故障） | ✅ |
 | 08 | 主机名变更致节点重复注册（真实故障） | ✅ |
+
+每场演练都有独立复盘（`drills/NN-*.md`），记录注入方式、时间线、根因与改进项。
+下面是一次演练的现场证据：左半部分容器被 cgroup OOM killer 杀掉（`OOMKilled` / `exitCode=137`），
+右半部分是镜像 tag 不存在导致 `ImagePullBackOff`（注意报错是 **403**，不是 404）：
+
+![演练现场证据](docs/drill-evidence.png)
 
 ## 备注
 
