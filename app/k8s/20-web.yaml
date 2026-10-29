@@ -40,12 +40,16 @@ spec:
             limits:
               memory: 128Mi
           readinessProbe:
+            # 查库的探针：DB 不可用时 Pod 变 NotReady，Ingress 摘掉后端（503 而不是 500）
             httpGet:
-              path: /healthz
+              path: /readyz
               port: 8000
             initialDelaySeconds: 5
             periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
           livenessProbe:
+            # 存活探针不查库，避免数据库抖动把容器重启掉
             httpGet:
               path: /healthz
               port: 8000

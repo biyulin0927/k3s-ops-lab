@@ -36,7 +36,24 @@ def query():
 
 @app.route("/healthz")
 def healthz():
+    """存活探针：只证明进程还在，不查依赖。"""
     return "ok"
+
+
+@app.route("/readyz")
+def readyz():
+    """就绪探针：真查一次数据库。
+
+    04 号演练暴露的问题：MySQL 挂了，web 仍然是 Ready，
+    k8s 和 Ingress 都不知道后端已经废了，用户拿到的是 500。
+    改成查库之后，DB 不可用时 Pod 会变 NotReady，Ingress 摘掉后端，
+    调用方看到的是 503（明确"暂时不可用"），而不是应用层 500。
+    """
+    try:
+        query()
+        return "ok"
+    except Exception as exc:  # noqa: BLE001
+        return f"db unavailable: {exc}", 503
 
 
 @app.route("/metrics")
