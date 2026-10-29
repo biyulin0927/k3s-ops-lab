@@ -85,7 +85,7 @@ kubectl -n monitoring delete pod <stuck-pod> --force --grace-period=0
 
 ## 改进项
 
-- [ ] **磁盘分层告警**：80% warning、85% critical（现在只有 85% 一条）
+- [x] **磁盘分层告警**：80% warning、85% critical（已落地：`node-disk-warn` + `node-disk-high`）
 - [ ] **关键组件加 `priorityClassName: system-cluster-critical`**，
       降低 Prometheus / Grafana / Alertmanager 被驱逐的概率
 - [ ] **监控组件与业务分节点部署**（03 号结论，本次再次验证）

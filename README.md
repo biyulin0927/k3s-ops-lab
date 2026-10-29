@@ -56,7 +56,7 @@
 - [x] Flask + MySQL 业务部署（`/api/time` 返回数据库时间，`/metrics` 暴露指标）
 - [x] GitHub Actions 自动发布（push → ghcr 镜像 → 滚动更新 → 失败回滚）
 - [x] Prometheus + Grafana 监控看板（8 个面板）
-- [x] 告警链路（Grafana 规则 → Webhook Relay → 钉钉，6 条规则全部实测触发与恢复）
+- [x] 告警链路（Grafana 规则 → Webhook Relay → 钉钉，8 条规则，核心 7 条已实测触发与恢复）
 - [x] master 升配到 2C4G
 - [x] 入口可用性探针（blackbox-exporter + Grafana 告警规则）
 - [x] 6 类故障演练（01–06）全部完成，均有复盘
@@ -77,7 +77,7 @@ CI 最近的推送均通过（`构建并推送镜像` 成功，`部署到 k3s` �
 | 业务 | Flask + MySQL，`/api/time` 三处入口均 200 |
 | 入口 | Traefik + svclb，80/443 正常，`pathType: Prefix` |
 | 监控 | Prometheus + Grafana（NodePort 30300），8 面板看板 |
-| 告警 | 6 条规则（内存/磁盘/Pod 重启/5xx/入口探活/镜像拉取）→ Relay → 钉钉，均已实测触发与恢复 |
+| 告警 | 8 条规则（内存/磁盘 80%+85% 分层/Pod 重启/5xx/入口探活/镜像拉取/OOM 专项）→ Relay → 钉钉，核心 7 条已实测 |
 | 日志 | Loki + Promtail，保留 7 天，Grafana 数据源 `uid=loki` 已连通 |
 | 探针 | blackbox-exporter 探 `http://<node-ip>/api/time`，30s 一次 |
 | 复盘 | `drills/00`、`drills/01`、`drills/02`、`drills/03`、`drills/04`、`drills/05`、`drills/06`、`drills/07`、`drills/08` |
@@ -155,10 +155,13 @@ Grafana 看板（8 个面板，数据来自 Prometheus）：
 
 ![钉钉告警触发与恢复](docs/dingtalk-alert.png)
 
-6 条告警规则全部由 `grafana-standalone.yaml` 声明式下发（`Provisioned` 标记），
+8 条告警规则全部由 `grafana-standalone.yaml` 声明式下发（`Provisioned` 标记），
 当前状态均为正常（绿色对勾）：
 
 ![告警规则列表](docs/grafana-alert-rules.png)
+
+> 截图拍摄时是 6 条；之后按 01/02 号复盘又加了「节点磁盘空间预警（80%）」与「容器被 OOMKilled」，
+> 现为 8 条，界面结构不变。
 
 入口可用性由 blackbox-exporter 独立探测（不走应用自身的 `/metrics`，避免"应用自证健康"）。
 `probe_success` 对两个节点入口各产生一条序列，**1 = 可用，0 = 不可用**：

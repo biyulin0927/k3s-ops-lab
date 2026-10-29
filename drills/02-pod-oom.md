@@ -100,8 +100,8 @@ kubectl -n demo delete pod oom-demo
 
 ## 改进项
 
-- [ ] **缩短窗口**：`increase(...[10m]) > 3` 改为 `increase(...[3m]) > 2`，恢复滞后从 8 分钟压到 2 分钟内
-- [ ] **加一条 OOM 专项告警**：`kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1`
-      （已确认 kube-state-metrics v2.20.0 提供该指标，当前集群可查）
+- [x] **缩短窗口**：`increase(...[10m]) > 3` 改为 `increase(...[3m]) > 2`，恢复滞后从 8 分钟压到 2 分钟内
+- [x] **加一条 OOM 专项告警**：`kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1`
+      （已实测：重新注入 OOM Pod 后约 2.5 分钟触发 firing）
 - [ ] 演练时顺手记录 `kubectl top pod` 与容器实际 RSS 曲线，作为扩容依据
 - [x] 本次复盘归档

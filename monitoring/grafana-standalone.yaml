@@ -97,6 +97,45 @@ data:
                   refId: C
                   type: threshold
 
+          # 分层告警：80% 预警，85% 严重。
+          # 01 号演练发现 85% 告警 + 5 分钟 for 与 kubelet 约 88% 的驱逐线只差 2-3 个点，
+          # 等于"告警刚响就开始驱逐"，所以提前到 80% 给反应时间
+          - uid: node-disk-warn
+            title: 节点磁盘空间预警
+            condition: C
+            for: 10m
+            noDataState: OK
+            execErrState: Error
+            labels:
+              severity: warning
+            annotations:
+              summary: 节点 {{ $labels.instance }} 根分区使用率超过 80%，接近驱逐阈值
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: prometheus
+                model:
+                  editorMode: code
+                  expr: (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!="tmpfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!="tmpfs"}) * 100
+                  instant: true
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator: {params: [80], type: gt}
+                      operator: {type: and}
+                      query: {params: [A]}
+                      reducer: {params: [], type: last}
+                      type: query
+                  datasource: {type: __expr__, uid: __expr__}
+                  expression: A
+                  refId: C
+                  type: threshold
+
           - uid: node-disk-high
             title: 节点磁盘使用率过高
             condition: C
@@ -104,7 +143,7 @@ data:
             noDataState: OK
             execErrState: Error
             labels:
-              severity: warning
+              severity: critical
             annotations:
               summary: 节点 {{ $labels.instance }} 根分区使用率超过 85%
             data:
@@ -133,6 +172,8 @@ data:
                   refId: C
                   type: threshold
 
+          # 02 号演练发现 increase[10m] 会让 Pod 恢复后仍告警 8 分钟，
+          # 窗口缩到 3 分钟（阈值同步调成 2 次）
           - uid: pod-restart-loop
             title: Pod 频繁重启
             condition: C
@@ -142,14 +183,14 @@ data:
             labels:
               severity: critical
             annotations:
-              summary: Pod {{ $labels.namespace }}/{{ $labels.pod }} 10 分钟内重启超过 3 次
+              summary: Pod {{ $labels.namespace }}/{{ $labels.pod }} 3 分钟内重启超过 2 次
             data:
               - refId: A
                 relativeTimeRange: {from: 600, to: 0}
                 datasourceUid: prometheus
                 model:
                   editorMode: code
-                  expr: increase(kube_pod_container_status_restarts_total{namespace="demo"}[10m])
+                  expr: increase(kube_pod_container_status_restarts_total{namespace="demo"}[3m])
                   instant: true
                   intervalMs: 1000
                   maxDataPoints: 43200
@@ -159,7 +200,7 @@ data:
                 datasourceUid: __expr__
                 model:
                   conditions:
-                    - evaluator: {params: [3], type: gt}
+                    - evaluator: {params: [2], type: gt}
                       operator: {type: and}
                       query: {params: [A]}
                       reducer: {params: [], type: last}
@@ -260,6 +301,44 @@ data:
                 model:
                   editorMode: code
                   expr: kube_pod_container_status_waiting_reason{reason=~"ImagePullBackOff|ErrImagePull"} > 0
+                  instant: true
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator: {params: [0], type: gt}
+                      operator: {type: and}
+                      query: {params: [A]}
+                      reducer: {params: [], type: last}
+                      type: query
+                  datasource: {type: __expr__, uid: __expr__}
+                  expression: A
+                  refId: C
+                  type: threshold
+
+          # OOM 专项：02 号演练发现只看重启次数无法区分"OOM"和"普通崩溃"，
+          # kube-state-metrics 直接提供了最近一次终止原因
+          - uid: container-oomkilled
+            title: 容器被 OOMKilled
+            condition: C
+            for: 1m
+            noDataState: OK
+            execErrState: Error
+            labels:
+              severity: warning
+            annotations:
+              summary: 容器 {{ $labels.namespace }}/{{ $labels.pod }}:{{ $labels.container }} 上一次退出原因是 OOMKilled
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: prometheus
+                model:
+                  editorMode: code
+                  expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
                   instant: true
                   intervalMs: 1000
                   maxDataPoints: 43200
