@@ -33,6 +33,10 @@ data:
           preferred_ip_protocol: ip4
           valid_status_codes: [200]
           follow_redirects: false
+      # 供"数据库可用性"探针使用：只要能建立 TCP 连接就算通
+      tcp_connect:
+        prober: tcp
+        timeout: 5s
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -125,3 +129,29 @@ spec:
       labels:
         service: web
         check: ingress
+---
+# MySQL 可用性探针：作为"根因告警"的数据源。
+# 04 号演练里 MySQL 一挂，5xx 和入口探针两条告警同时响，
+# 这个 tcp 探针让"数据库到底通不通"变成一条独立、可引用的指标，
+# 5xx / 入口两条规则就能用 PromQL 做关联抑制。
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: mysql-tcp
+  namespace: monitoring
+  labels:
+    release: kube-prom
+spec:
+  jobName: blackbox-mysql
+  interval: 15s
+  module: tcp_connect
+  prober:
+    url: blackbox-exporter.monitoring.svc.cluster.local:9115
+    path: /probe
+  targets:
+    staticConfig:
+      static:
+        - mysql.demo.svc.cluster.local:3306
+      labels:
+        service: mysql
+        check: tcp

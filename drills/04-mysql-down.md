@@ -128,6 +128,8 @@ kubectl -n demo wait --for=condition=Ready pod/mysql-0 --timeout=120s
 - [x] 给 `demo/web` Service 补 `app: web` 标签
 - [ ] **readiness 覆盖数据库依赖**：`/readyz` 里查一次 `SELECT 1`，DB 挂了 web 变 NotReady，
       Ingress 会摘掉后端（返回 503 而不是 500），语义更准
-- [ ] **告警抑制**：MySQL 不可用时抑制"入口不可用"/"5xx"，只保留根因告警
-- [ ] **5xx 窗口 `[5m]` → `[2m]`**，缩短恢复判定
+- [x] **告警抑制**：新增 `blackbox-mysql` TCP 探针与「MySQL 不可用」根因规则，
+      5xx 用 `and on() min_over_time(...[5m])==1` 关联、入口用算术把 MySQL 故障顶成正常；
+      实测停库时只有根因告警触发，恢复后也不补发过期告警
+- [ ] **5xx 窗口 `[5m]` → `[2m]`**，缩短恢复判定（当前用 `min_over_time` 规避了补发问题）
 - [ ] **排查其它 `noDataState: OK` 的规则**：确认每一条都有真实数据，避免再有"僵尸规则"

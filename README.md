@@ -56,7 +56,7 @@
 - [x] Flask + MySQL 业务部署（`/api/time` 返回数据库时间，`/metrics` 暴露指标）
 - [x] GitHub Actions 自动发布（push → ghcr 镜像 → 滚动更新 → 失败回滚）
 - [x] Prometheus + Grafana 监控看板（8 个面板）
-- [x] 告警链路（Grafana 规则 → Webhook Relay → 钉钉，8 条规则，核心 7 条已实测触发与恢复）
+- [x] 告警链路（Grafana 规则 → Webhook Relay → 钉钉，9 条规则，核心 8 条已实测触发与恢复）
 - [x] master 升配到 2C4G
 - [x] 入口可用性探针（blackbox-exporter + Grafana 告警规则）
 - [x] 6 类故障演练（01–06）全部完成，均有复盘
@@ -77,7 +77,7 @@ CI 最近的推送均通过（`构建并推送镜像` 成功，`部署到 k3s` �
 | 业务 | Flask + MySQL，`/api/time` 三处入口均 200 |
 | 入口 | Traefik + svclb，80/443 正常，`pathType: Prefix` |
 | 监控 | Prometheus + Grafana（NodePort 30300），8 面板看板 |
-| 告警 | 8 条规则（内存/磁盘 80%+85% 分层/Pod 重启/5xx/入口探活/镜像拉取/OOM 专项）→ Relay → 钉钉，核心 7 条已实测 |
+| 告警 | 9 条规则（内存/磁盘分层/Pod 重启/5xx/入口探活/镜像拉取/OOM/MySQL），含根因关联抑制 → Relay → 钉钉 |
 | 日志 | Loki + Promtail，保留 7 天；「k3s 日志总览」看板 4 个面板 |
 | 探针 | blackbox-exporter 探 `http://<node-ip>/api/time`，30s 一次 |
 | 复盘 | `drills/00`、`drills/01`、`drills/02`、`drills/03`、`drills/04`、`drills/05`、`drills/06`、`drills/07`、`drills/08` |
@@ -85,18 +85,19 @@ CI 最近的推送均通过（`构建并推送镜像` 成功，`部署到 k3s` �
 
 **进行中 / 待处理**
 
-1. **告警规则来源**：Grafana 规则由 `grafana-standalone.yaml` 的 provisioning 文件提供（`provenance=file`），
-   `create-alerts.py` 是早期 API 方式，已不再需要，留着仅作参考
-2. **Pod 重启规则窗口过长**：`increase[10m]` 导致 Pod 恢复后仍告警 8 分钟，建议改 `[3m]` 并补 OOM 专项告警
-3. **readiness 未覆盖数据库依赖**：MySQL 挂了 web 仍 Ready（`/healthz` 不查库），`kubectl` 一片绿但全量 500
-5. **同时告警未抑制**：MySQL 故障会同时触发 5xx 与入口探针告警，建议加 inhibition 收敛到根因
-6. **监控与被监控对象同节点**：03/04/01 三次演练都出现"节点或磁盘一出事，Prometheus/Grafana 一起失联"
-   （Loki 已刻意放到 master，与 worker 上的监控栈分开）
-7. **磁盘告警缺少分层**：只有 85% 一条，而驱逐线约在 88%，中间没有缓冲
-8. **flannel FDB 修复不持久**：08 号故障是手工补的表项，需重启 `k3s-agent` 验证能否自动重建
-9. **6443 安全组**：当前对 `118.113.89.85` 开放，需确认是 `/32` 还是 `0.0.0.0/0`
-10. **GitHub Actions 部署 job 默认跳过**：托管 Runner 的出口 IP 不在 6443 白名单，连不上 API Server。
-    已加 `ENABLE_DEPLOY` 开关（见备注），要真正自动部署需自托管 Runner
+1. **readiness 未覆盖数据库依赖**：MySQL 挂了 web 仍 Ready（`/healthz` 不查库），
+   `kubectl` 一片绿但全量 500；建议加 `/readyz` 查一次 `SELECT 1`
+2. **监控与被监控对象同节点**：03/04/01 三次演练都出现"节点或磁盘一出事，Prometheus/Grafana 一起失联"
+   （Loki 已刻意放到 master，但指标栈仍在 worker，属于结构性改进，需要迁移 PVC）
+3. **flannel FDB 修复不持久**：08 号故障是手工补的表项，需重启 `k3s-agent` 验证能否自动重建
+4. **6443 安全组**：当前对 `118.113.89.85` 开放，需确认是 `/32` 还是 `0.0.0.0/0`
+5. **GitHub Actions 部署 job 默认跳过**：托管 Runner 的出口 IP 不在 6443 白名单，连不上 API Server。
+   已加 `ENABLE_DEPLOY` 开关（见备注），要真正自动部署需自托管 Runner
+6. **告警规则来源**：`create-alerts.py` 是早期 API 方式，规则现已全部由 provisioning 文件下发，
+   该脚本仅作参考，可择机删除
+
+> 已闭环：磁盘分层告警（01）、重启窗口 + OOM 专项（02）、根因抑制（04）、镜像拉取告警（06）、
+> 配置声明式化（05）、入口探针（08）
 
 **下次开工顺序**
 
@@ -156,13 +157,33 @@ Grafana 看板（8 个面板，数据来自 Prometheus）：
 
 ![钉钉告警触发与恢复](docs/dingtalk-alert.png)
 
-8 条告警规则全部由 `grafana-standalone.yaml` 声明式下发（`Provisioned` 标记），
+9 条告警规则全部由 `grafana-standalone.yaml` 声明式下发（`Provisioned` 标记），
 当前状态均为正常（绿色对勾）：
 
 ![告警规则列表](docs/grafana-alert-rules.png)
 
-> 截图拍摄时是 6 条；之后按 01/02 号复盘又加了「节点磁盘空间预警（80%）」与「容器被 OOMKilled」，
-> 现为 8 条，界面结构不变。
+> 截图拍摄时是 6 条；之后按 01/02/04 号复盘陆续补了「节点磁盘空间预警（80%）」「容器被 OOMKilled」
+> 「MySQL 不可用」，现为 9 条，界面结构不变。
+
+### 根因抑制（不用 Alertmanager 也能收敛）
+
+04 号演练里 MySQL 一挂，「5xx 比例过高」和「入口不可用」会同时告警，值班时被同一根因刷屏。
+这里的做法是**用一个 TCP 探针把根因变成可引用的指标**，另外两条规则用 PromQL 关联它：
+
+```promql
+# 根因：MySQL 探针失败
+min(probe_success{job="blackbox-mysql"}) < 1
+
+# 5xx：只在 MySQL 最近 5 分钟持续可用时才评估（避免恢复后补发过期告警）
+sum(rate(http_requests_total{status="500"}[5m])) / sum(rate(http_requests_total[5m])) * 100
+  and on() (min_over_time(probe_success{job="blackbox-mysql"}[5m]) == 1)
+
+# 入口：MySQL 挂了就把它顶成 1（不告警），避免和根因告警重复
+min(probe_success{job="blackbox-web-http"}) + (1 - min(probe_success{job="blackbox-mysql"}))
+```
+
+实测（14:14 停掉 MySQL、14:17 恢复）：只有「MySQL 不可用」触发，5xx 与入口均被抑制，
+恢复后 4 分钟内也没有补发过期告警，钉钉只收到 1 条告警 + 1 条恢复。
 
 入口可用性由 blackbox-exporter 独立探测（不走应用自身的 `/metrics`，避免"应用自证健康"）。
 `probe_success` 对两个节点入口各产生一条序列，**1 = 可用，0 = 不可用**：
@@ -209,6 +230,10 @@ curl -u admin:admin123 -X POST http://127.0.0.1:30300/api/dashboards/db \
   -H 'Content-Type: application/json' \
   -d "{\"dashboard\": $(cat monitoring/grafana-loki-dashboard.json), \"overwrite\": true}"
 ```
+
+看板实际效果（上面三块是日志量/错误关键字/Top5 Pod，下方是实时日志流，可按 Pod、容器、级别展开）：
+
+![日志看板](docs/grafana-logs-dashboard.png)
 
 常用 LogQL：
 

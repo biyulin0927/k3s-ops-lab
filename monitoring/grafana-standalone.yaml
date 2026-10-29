@@ -210,6 +210,8 @@ data:
                   refId: C
                   type: threshold
 
+          # 关联抑制：MySQL 不可用时，5xx 是"果"而不是"因"，
+          # 这里用 and 关联 mysql 探针，DB 挂了本规则不响，只留「MySQL 不可用」一条根因告警
           - uid: app-5xx-high
             title: 应用 5xx 比例过高
             condition: C
@@ -219,14 +221,17 @@ data:
             labels:
               severity: critical
             annotations:
-              summary: 应用 5xx 请求占比超过 20%
+              summary: 应用 5xx 请求占比超过 20%（MySQL 正常时才会触发）
             data:
               - refId: A
                 relativeTimeRange: {from: 300, to: 0}
                 datasourceUid: prometheus
                 model:
                   editorMode: code
-                  expr: sum(rate(http_requests_total{status="500"}[5m])) / sum(rate(http_requests_total[5m])) * 100
+                  # 要求 MySQL 在最近 5 分钟内“持续”可用才评估 5xx。
+                  # 只看当前值不够：DB 刚恢复时 5xx 比例仍挂在 5 分钟窗口里，
+                  # 会补发一条“故障已结束”的过期告警（实测遇到过）
+                  expr: '(sum(rate(http_requests_total{status="500"}[5m])) / sum(rate(http_requests_total[5m])) * 100) and on() (min_over_time(probe_success{job="blackbox-mysql"}[5m]) == 1)'
                   instant: true
                   intervalMs: 1000
                   maxDataPoints: 43200
@@ -237,6 +242,43 @@ data:
                 model:
                   conditions:
                     - evaluator: {params: [20], type: gt}
+                      operator: {type: and}
+                      query: {params: [A]}
+                      reducer: {params: [], type: last}
+                      type: query
+                  datasource: {type: __expr__, uid: __expr__}
+                  expression: A
+                  refId: C
+                  type: threshold
+          # 根因告警：MySQL TCP 探针。04 号演练里它是"5xx + 入口"两条告警的共同原因，
+          # 单独抽出来之后，另外两条就能引用它做关联抑制
+          - uid: mysql-down
+            title: MySQL 不可用
+            condition: C
+            for: 1m
+            noDataState: Alerting
+            execErrState: Error
+            labels:
+              severity: critical
+            annotations:
+              summary: MySQL（mysql.demo.svc.cluster.local:3306）TCP 探活失败
+            data:
+              - refId: A
+                relativeTimeRange: {from: 300, to: 0}
+                datasourceUid: prometheus
+                model:
+                  editorMode: code
+                  expr: min(probe_success{job="blackbox-mysql"})
+                  instant: true
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator: {params: [1], type: lt}
                       operator: {type: and}
                       query: {params: [A]}
                       reducer: {params: [], type: last}
@@ -263,7 +305,10 @@ data:
                 datasourceUid: prometheus
                 model:
                   editorMode: code
-                  expr: min(probe_success{job="blackbox-web-http"})
+                  # 抑制：MySQL 挂掉时，入口失败是它的结果。
+                  # mysql 探针为 0 时把结果顶成 1（不告警），从而只保留「MySQL 不可用」；
+                  # 两者都正常时保持 1，web 挂掉时保持 0。
+                  expr: 'min(probe_success{job="blackbox-web-http"}) + (1 - min(probe_success{job="blackbox-mysql"}))'
                   instant: true
                   intervalMs: 1000
                   maxDataPoints: 43200
