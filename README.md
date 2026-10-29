@@ -60,14 +60,14 @@
 - [x] master 升配到 2C4G
 - [x] 入口可用性探针（blackbox-exporter + Grafana 告警规则）
 - [x] 6 类故障演练（01–06）全部完成，均有复盘
-- [ ] Loki 日志查询
+- [x] Loki + Promtail 日志查询（Grafana 里可直接按 namespace / pod 检索）
 
 CI 最近的推送均通过（`构建并推送镜像` 成功，`部署到 k3s` 按 `ENABLE_DEPLOY` 开关跳过，
 不会再出现红叉）：
 
 ![GitHub Actions](docs/github-actions.png)
 
-## 当前状态（2026-10-28 下午）
+## 当前状态（2026-10-29 下午）
 
 **已完成**
 
@@ -78,6 +78,7 @@ CI 最近的推送均通过（`构建并推送镜像` 成功，`部署到 k3s` �
 | 入口 | Traefik + svclb，80/443 正常，`pathType: Prefix` |
 | 监控 | Prometheus + Grafana（NodePort 30300），8 面板看板 |
 | 告警 | 6 条规则（内存/磁盘/Pod 重启/5xx/入口探活/镜像拉取）→ Relay → 钉钉，均已实测触发与恢复 |
+| 日志 | Loki + Promtail，保留 7 天，Grafana 数据源 `uid=loki` 已连通 |
 | 探针 | blackbox-exporter 探 `http://<node-ip>/api/time`，30s 一次 |
 | 复盘 | `drills/00`、`drills/01`、`drills/02`、`drills/03`、`drills/04`、`drills/05`、`drills/06`、`drills/07`、`drills/08` |
 | 主机名 | 已固化 `master` / `k3s-node1`，幽灵节点已清理 |
@@ -86,11 +87,11 @@ CI 最近的推送均通过（`构建并推送镜像` 成功，`部署到 k3s` �
 
 1. **告警规则来源**：Grafana 规则由 `grafana-standalone.yaml` 的 provisioning 文件提供（`provenance=file`），
    `create-alerts.py` 是早期 API 方式，已不再需要，留着仅作参考
-2. **Loki 日志**：未部署，Grafana 里还没有日志查询能力
-3. **Pod 重启规则窗口过长**：`increase[10m]` 导致 Pod 恢复后仍告警 8 分钟，建议改 `[3m]` 并补 OOM 专项告警
-4. **readiness 未覆盖数据库依赖**：MySQL 挂了 web 仍 Ready（`/healthz` 不查库），`kubectl` 一片绿但全量 500
+2. **Pod 重启规则窗口过长**：`increase[10m]` 导致 Pod 恢复后仍告警 8 分钟，建议改 `[3m]` 并补 OOM 专项告警
+3. **readiness 未覆盖数据库依赖**：MySQL 挂了 web 仍 Ready（`/healthz` 不查库），`kubectl` 一片绿但全量 500
 5. **同时告警未抑制**：MySQL 故障会同时触发 5xx 与入口探针告警，建议加 inhibition 收敛到根因
 6. **监控与被监控对象同节点**：03/04/01 三次演练都出现"节点或磁盘一出事，Prometheus/Grafana 一起失联"
+   （Loki 已刻意放到 master，与 worker 上的监控栈分开）
 7. **磁盘告警缺少分层**：只有 85% 一条，而驱逐线约在 88%，中间没有缓冲
 8. **flannel FDB 修复不持久**：08 号故障是手工补的表项，需重启 `k3s-agent` 验证能否自动重建
 9. **6443 安全组**：当前对 `118.113.89.85` 开放，需确认是 `/32` 还是 `0.0.0.0/0`
@@ -100,9 +101,9 @@ CI 最近的推送均通过（`构建并推送镜像` 成功，`部署到 k3s` �
 **下次开工顺序**
 
 1. 确认环境：`kubectl get nodes`、`kubectl -n monitoring get pods`、`curl http://127.0.0.1/api/time`
-2. 装 Loki + Promtail，Grafana 加日志数据源
-3. 落地 03/04/01 三条演练得出的共性改进：监控拆分、告警抑制、磁盘分层告警
-4. 补 README 截图与演练汇总（平均发现时间、MTTR）
+2. 落地 03/04/01 三条演练得出的共性改进：监控拆分、告警抑制、磁盘分层告警
+3. 在 Grafana 里补一个「日志」看板（Loki 数据源已就绪）
+4. 补 README 截图与演练汇总（MTTR）
 
 ## 目录结构
 
@@ -121,6 +122,8 @@ k3s-ops-lab/
 │   ├── grafana-standalone.yaml   # 独立 Grafana，含数据源与告警 provisioning
 │   ├── blackbox.yaml         # 入口探针：blackbox-exporter + Probe
 │   ├── servicemonitor-web.yaml   # 采集业务 /metrics（5xx 规则的数据源）
+│   ├── loki.yaml             # 日志存储（单机，文件系统 + PVC，跑在 master）
+│   ├── promtail.yaml         # 日志采集 DaemonSet（/var/log/pods → Loki）
 │   ├── create-alerts.py      # 早期 API 建规则脚本（已被 provisioning 取代）
 │   ├── grafana-dashboard.json
 │   └── feishu-relay/         # Webhook 转发（实际发钉钉，历史命名）
@@ -184,6 +187,40 @@ curl -s 'localhost:9090/api/v1/query?query=probe_success'
 > 排障备注：Grafana 13 的 provisioning 不会清理数据库里同名的遗留联系人，会让每次通知重复发两条。
 > 本次删除了历史遗留的联系人，重启后确认只剩 `dingtalk-webhook` 一条。
 
+## 日志（Loki + Promtail）
+
+- **Promtail**：DaemonSet，每个节点采集 `/var/log/pods` 下的容器日志，解析 CRI 格式，
+  自动打上 `namespace` / `pod` / `container` / `stream` 标签
+- **Loki**：单机模式，文件系统存储 + `local-path` PVC（10 GiB），保留 7 天
+- **位置**：Loki 刻意放在 **master**，和 worker 上的 Prometheus/Grafana 分开 ——
+  03/04/01 三次演练都出现过"节点故障连带观测能力消失"，日志不该和指标一起丢
+- **查询**：Grafana 数据源 `uid=loki`，Explore 里选 Loki 即可
+
+常用 LogQL：
+
+```logql
+# 某个 namespace 的全部日志
+{namespace="demo"}
+
+# 只看 web 容器里的 500
+{namespace="demo", container="web"} |= "500"
+
+# 统计每分钟错误日志条数（可当告警表达式）
+sum(count_over_time({namespace="demo"} |= "error" [1m]))
+
+# 按 Pod 过滤，并解析 JSON 日志字段
+{namespace="demo"} | json | level="error"
+```
+
+命令行验证（不依赖 Grafana）：
+
+```bash
+kubectl -n monitoring port-forward svc/loki 3100:3100
+curl -s 'localhost:3100/loki/api/v1/labels'
+curl -s --get 'localhost:3100/loki/api/v1/query_range' \
+  --data-urlencode 'query={namespace="demo"}' --data-urlencode 'limit=5'
+```
+
 ## 快速开始
 
 ```bash
@@ -206,6 +243,10 @@ kubectl apply -f monitoring/servicemonitor-web.yaml
 
 # 6. 告警转发服务（钉钉 Webhook Relay，ConfigMap 由 app.py 自动生成）
 kubectl apply -k monitoring/feishu-relay/
+
+# 7. 日志（先 Loki 再 Promtail，后者要把日志推到前者）
+kubectl apply -f monitoring/loki.yaml
+kubectl apply -f monitoring/promtail.yaml
 ```
 
 业务验证（`/api/time` 查一次 MySQL 并返回数据库时间；`host` 是实际处理请求的 Pod）：
