@@ -78,7 +78,7 @@ CI 最近的推送均通过（`构建并推送镜像` 成功，`部署到 k3s` �
 | 入口 | Traefik + svclb，80/443 正常，`pathType: Prefix` |
 | 监控 | Prometheus + Grafana（NodePort 30300），8 面板看板 |
 | 告警 | 8 条规则（内存/磁盘 80%+85% 分层/Pod 重启/5xx/入口探活/镜像拉取/OOM 专项）→ Relay → 钉钉，核心 7 条已实测 |
-| 日志 | Loki + Promtail，保留 7 天，Grafana 数据源 `uid=loki` 已连通 |
+| 日志 | Loki + Promtail，保留 7 天；「k3s 日志总览」看板 4 个面板 |
 | 探针 | blackbox-exporter 探 `http://<node-ip>/api/time`，30s 一次 |
 | 复盘 | `drills/00`、`drills/01`、`drills/02`、`drills/03`、`drills/04`、`drills/05`、`drills/06`、`drills/07`、`drills/08` |
 | 主机名 | 已固化 `master` / `k3s-node1`，幽灵节点已清理 |
@@ -101,9 +101,9 @@ CI 最近的推送均通过（`构建并推送镜像` 成功，`部署到 k3s` �
 **下次开工顺序**
 
 1. 确认环境：`kubectl get nodes`、`kubectl -n monitoring get pods`、`curl http://127.0.0.1/api/time`
-2. 落地 03/04/01 三条演练得出的共性改进：监控拆分、告警抑制、磁盘分层告警
-3. 在 Grafana 里补一个「日志」看板（Loki 数据源已就绪）
-4. 补 README 截图与演练汇总（MTTR）
+2. 落地 03/04/01 三条演练得出的共性改进：监控拆分、告警抑制
+3. 给日志看板补一张截图，替换 README 里的占位说明
+4. 补演练汇总（MTTR）
 
 ## 目录结构
 
@@ -124,6 +124,7 @@ k3s-ops-lab/
 │   ├── servicemonitor-web.yaml   # 采集业务 /metrics（5xx 规则的数据源）
 │   ├── loki.yaml             # 日志存储（单机，文件系统 + PVC，跑在 master）
 │   ├── promtail.yaml         # 日志采集 DaemonSet（/var/log/pods → Loki）
+│   ├── grafana-loki-dashboard.json   # 「k3s 日志总览」看板（4 面板）
 │   ├── create-alerts.py      # 早期 API 建规则脚本（已被 provisioning 取代）
 │   ├── grafana-dashboard.json
 │   └── feishu-relay/         # Webhook 转发（实际发钉钉，历史命名）
@@ -198,6 +199,16 @@ curl -s 'localhost:9090/api/v1/query?query=probe_success'
 - **位置**：Loki 刻意放在 **master**，和 worker 上的 Prometheus/Grafana 分开 ——
   03/04/01 三次演练都出现过"节点故障连带观测能力消失"，日志不该和指标一起丢
 - **查询**：Grafana 数据源 `uid=loki`，Explore 里选 Loki 即可
+- **看板**：「k3s 日志总览」（`uid=k3s-logs`），4 个面板：
+  日志量按 namespace、错误关键字日志、Top 5 Pod 日志量、最近日志流
+
+导入看板（Dashboard JSON 存在仓库里，重装后可一条命令恢复）：
+
+```bash
+curl -u admin:admin123 -X POST http://127.0.0.1:30300/api/dashboards/db \
+  -H 'Content-Type: application/json' \
+  -d "{\"dashboard\": $(cat monitoring/grafana-loki-dashboard.json), \"overwrite\": true}"
+```
 
 常用 LogQL：
 
