@@ -122,12 +122,27 @@ kubectl -n demo wait --for=condition=Ready pod/mysql-0 --timeout=120s
   两条告警是同一个根因，需要抑制（inhibition）或分组，否则告警一多就没人细看。
 - **5xx 规则恢复慢**：`rate(...[5m])` 的窗口让恢复通知比实际恢复晚了 **5 分钟**（12:41:55 恢复，12:47:10 才解除）。
 
+## 后续改造：readiness 查库（2026-10-29 复测）
+
+把 `/readyz` 改成真查一次 `SELECT 1`，readiness 指向它（liveness 仍用 `/healthz`，避免 DB 抖动重启容器）。
+重新停 MySQL 复测：
+
+| 时间 | 事件 |
+|---|---|
+| 15:33:10 | `scale sts mysql --replicas=0` |
+| +约 10s | 两个 web Pod 变 `0/1 NotReady`，Endpoints 清空 |
+| +45s | `curl /api/time` → **503**（Traefik，无可用后端），不再是 500 |
+| 15:35:13 | 只有「MySQL 不可用」触发并推送钉钉；5xx、入口均被抑制 |
+| 15:37:52 | 恢复后规则回到 inactive，业务 200 |
+
+对比改造前：用户拿到 500 且 `kubectl get pods` 全绿；改造后语义清晰——**503 = 暂时不可用，500 = 应用真的出错**。
+
 ## 改进项
 
 - [x] 新增 `servicemonitor-web.yaml`，业务指标真正被采集，5xx 规则生效并实测
 - [x] 给 `demo/web` Service 补 `app: web` 标签
-- [ ] **readiness 覆盖数据库依赖**：`/readyz` 里查一次 `SELECT 1`，DB 挂了 web 变 NotReady，
-      Ingress 会摘掉后端（返回 503 而不是 500），语义更准
+- [x] **readiness 覆盖数据库依赖**：新增 `/readyz` 查 `SELECT 1`，DB 挂了 web 变 NotReady，
+      Ingress 摘掉后端（返回 503 而不是 500），已复测
 - [x] **告警抑制**：新增 `blackbox-mysql` TCP 探针与「MySQL 不可用」根因规则，
       5xx 用 `and on() min_over_time(...[5m])==1` 关联、入口用算术把 MySQL 故障顶成正常；
       实测停库时只有根因告警触发，恢复后也不补发过期告警

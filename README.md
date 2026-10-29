@@ -74,7 +74,7 @@ CI 最近的推送均通过（`构建并推送镜像` 成功，`部署到 k3s` �
 | 项 | 说明 |
 |---|---|
 | 集群 | 2 节点 k3s v1.36.5，均 Ready，无异常 Pod |
-| 业务 | Flask + MySQL，`/api/time` 三处入口均 200 |
+| 业务 | Flask + MySQL，`/api/time` 三处入口均 200；readiness 查库，DB 挂了返回 503 而不是 500 |
 | 入口 | Traefik + svclb，80/443 正常，`pathType: Prefix` |
 | 监控 | Prometheus + Grafana（NodePort 30300），8 面板看板 |
 | 告警 | 9 条规则（内存/磁盘分层/Pod 重启/5xx/入口探活/镜像拉取/OOM/MySQL），含根因关联抑制 → Relay → 钉钉 |
@@ -85,19 +85,17 @@ CI 最近的推送均通过（`构建并推送镜像` 成功，`部署到 k3s` �
 
 **进行中 / 待处理**
 
-1. **readiness 未覆盖数据库依赖**：MySQL 挂了 web 仍 Ready（`/healthz` 不查库），
-   `kubectl` 一片绿但全量 500；建议加 `/readyz` 查一次 `SELECT 1`
-2. **监控与被监控对象同节点**：03/04/01 三次演练都出现"节点或磁盘一出事，Prometheus/Grafana 一起失联"
+1. **监控与被监控对象同节点**：03/04/01 三次演练都出现"节点或磁盘一出事，Prometheus/Grafana 一起失联"
    （Loki 已刻意放到 master，但指标栈仍在 worker，属于结构性改进，需要迁移 PVC）
-3. **flannel FDB 修复不持久**：08 号故障是手工补的表项，需重启 `k3s-agent` 验证能否自动重建
-4. **6443 安全组**：当前对 `118.113.89.85` 开放，需确认是 `/32` 还是 `0.0.0.0/0`
-5. **GitHub Actions 部署 job 默认跳过**：托管 Runner 的出口 IP 不在 6443 白名单，连不上 API Server。
+2. **flannel FDB 修复不持久**：08 号故障是手工补的表项，需重启 `k3s-agent` 验证能否自动重建
+3. **6443 安全组**：当前对 `118.113.89.85` 开放，需确认是 `/32` 还是 `0.0.0.0/0`
+4. **GitHub Actions 部署 job 默认跳过**：托管 Runner 的出口 IP 不在 6443 白名单，连不上 API Server。
    已加 `ENABLE_DEPLOY` 开关（见备注），要真正自动部署需自托管 Runner
-6. **告警规则来源**：`create-alerts.py` 是早期 API 方式，规则现已全部由 provisioning 文件下发，
+5. **告警规则来源**：`create-alerts.py` 是早期 API 方式，规则现已全部由 provisioning 文件下发，
    该脚本仅作参考，可择机删除
 
-> 已闭环：磁盘分层告警（01）、重启窗口 + OOM 专项（02）、根因抑制（04）、镜像拉取告警（06）、
-> 配置声明式化（05）、入口探针（08）
+> 已闭环：磁盘分层告警（01）、重启窗口 + OOM 专项（02）、根因抑制 + readiness 查库（04）、
+> 镜像拉取告警（06）、配置声明式化（05）、入口探针（08）、日志与看板、9 条告警规则
 
 **下次开工顺序**
 
@@ -184,6 +182,9 @@ min(probe_success{job="blackbox-web-http"}) + (1 - min(probe_success{job="blackb
 
 实测（14:14 停掉 MySQL、14:17 恢复）：只有「MySQL 不可用」触发，5xx 与入口均被抑制，
 恢复后 4 分钟内也没有补发过期告警，钉钉只收到 1 条告警 + 1 条恢复。
+
+配合 readiness 查库改造后，DB 故障时用户拿到的是 **503（暂时不可用）**，而不是应用层 500——
+两个信号各司其职：503 表示"后端被摘掉了"，500 才是"应用真的出错"。
 
 入口可用性由 blackbox-exporter 独立探测（不走应用自身的 `/metrics`，避免"应用自证健康"）。
 `probe_success` 对两个节点入口各产生一条序列，**1 = 可用，0 = 不可用**：
