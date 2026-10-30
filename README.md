@@ -318,6 +318,20 @@ kubectl apply -f monitoring/promtail.yaml
 
 ![演练现场证据](docs/drill-evidence.png)
 
+> 演练数据汇总（平均发现时间、修复的缺陷清单）与**简历描述、面试问答**整理在
+> [`docs/project-summary.md`](docs/project-summary.md)。
+
+## 已知限制
+
+这个项目是"学习 + 作品"，有意保留了取舍，面试时会主动说明：
+
+1. **单 master**：k3s + SQLite，控制面不具备高可用
+2. **MySQL 单副本 + local-path**：存储钉死在 worker，节点故障无法漂移（07 号演练实测中断 40 分钟）
+3. **监控栈与业务同节点**：节点/磁盘故障时指标与看板一起失联（03/04/01 三次验证）；
+   Loki 已放到 master，但没有集群外探活，整节点挂掉时告警仍然发不出去
+4. **告警抑制是 PromQL 级**：不如 Alertmanager 的 `inhibit_rules` 通用
+5. **CI 不能自动部署**：6443 只放行固定 IP，托管 Runner 连不上，`deploy` job 默认跳过
+
 ## 备注
 
 - 本项目为个人学习用途，节点为单点 master，不具备生产高可用能力
