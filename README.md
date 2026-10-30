@@ -90,8 +90,6 @@ CI 最近的推送均通过（`构建并推送镜像` 成功，`部署到 k3s` �
 2. **6443 安全组**：当前对 `118.113.89.85` 开放，需确认是 `/32` 还是 `0.0.0.0/0`
 3. **GitHub Actions 部署 job 默认跳过**：托管 Runner 的出口 IP 不在 6443 白名单，连不上 API Server。
    已加 `ENABLE_DEPLOY` 开关（见备注），要真正自动部署需自托管 Runner
-4. **告警规则来源**：`create-alerts.py` 是早期 API 方式，规则现已全部由 provisioning 文件下发，
-   该脚本仅作参考，可择机删除
 
 > 已闭环：磁盘分层告警（01）、重启窗口 + OOM 专项（02）、根因抑制 + readiness 查库（04）、
 > 镜像拉取告警（06）、配置声明式化（05）、入口探针（08）、FDB 自愈复验（08）、日志与看板、9 条告警规则
@@ -123,7 +121,6 @@ k3s-ops-lab/
 │   ├── loki.yaml             # 日志存储（单机，文件系统 + PVC，跑在 master）
 │   ├── promtail.yaml         # 日志采集 DaemonSet（/var/log/pods → Loki）
 │   ├── grafana-loki-dashboard.json   # 「k3s 日志总览」看板（4 面板）
-│   ├── create-alerts.py      # 早期 API 建规则脚本（已被 provisioning 取代）
 │   ├── grafana-dashboard.json
 │   └── feishu-relay/         # Webhook 转发（实际发钉钉，历史命名）
 │       ├── app.py
