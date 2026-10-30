@@ -139,12 +139,36 @@ kubectl top nodes          # metrics-server 恢复（此前它的旧 Pod 卡在 
   （内存 / 磁盘 / Pod 重启 / 5xx）没有一条覆盖"入口不可用"。
   Pod 全是 Running、5xx 为 0，监控面板一片绿 —— 典型的"监控盲区"。
 
+## 复验：FDB 表项会不会自愈（2026-10-30）
+
+当初手工补的那条表项，一直不确定是"永久补丁"还是"重启就会重建"。用两步验证：
+
+```bash
+# 1. 让 worker 回到"缺表项"的状态
+bridge fdb del aa:92:bb:aa:b9:b6 dev flannel.1     # 表项清空
+ping -c 2 10.42.0.27                               # 100% 丢包（复现跨节点不通）
+
+# 2. 重启 worker 的 k3s-agent
+systemctl restart k3s-agent
+
+# 3. 45 秒后复查
+bridge fdb show dev flannel.1                      # 表项自动回来了
+ping -c 2 10.42.0.27                               # 0% 丢包
+```
+
+**结论：flannel 会在 agent 启动时按 subnet 事件重建 FDB，不需要长期驻留手工命令。**
+08 号故障里表项一直没回来，是因为出问题后 k3s / agent 从未重启过 ——
+它只在启动或收到 subnet 事件时写表，不会周期性自检。
+
+顺带确认：重启 worker 的 `k3s-agent` 不会重启业务和监控容器（本次 Pod 的 RESTARTS 全为 0，
+Prometheus / Grafana / MySQL 都没动）。
+
 ## 改进项
 
 - [x] 固化主机名，清理幽灵节点与卡死 Pod
 - [x] 记录本次复盘（本文）
 - [x] **blackbox-exporter 探活 `/api/time`**，作为「入口可用性」的独立告警
       （`monitoring/blackbox.yaml` + Grafana 规则「入口不可用（探针失败）」，30s 探测，连续 2 分钟失败告警）
-- [ ] FDB 修复是运行时的，不持久：安排一次 `systemctl restart k3s-agent` 并复查表项是否自动重建
+- [x] FDB 表项自愈已复验：`systemctl restart k3s-agent` 后自动重建（见上节）
 - [ ] 变更检查清单：动控制面之前先记录 `kubectl get nodes`、Pod 分布、`curl` 基线
 - [ ] 确认 6443 安全组是 `/32` 还是 `0.0.0.0/0`
